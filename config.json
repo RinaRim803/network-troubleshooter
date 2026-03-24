@@ -1,0 +1,9 @@
+{
+  "dependencies": [
+    {
+      "import_name": "psutil",
+      "install_name": "psutil",
+      "version": ">=5.9.0"
+    }
+  ]
+}
