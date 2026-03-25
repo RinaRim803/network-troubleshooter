@@ -133,32 +133,32 @@ This project is engineered with a focus on **modular scalability** and **low-ove
 
 ### 1. Orchestration & Environment Safety (`main.py` & `setup.py`)
 Before any network checks begin, the system ensures environmental integrity.
-* **Auto-Dependency Injection:** `setup.py` reads `requirements.txt` and uses `importlib` to check for missing packages. [cite_start]If a dependency like `psutil` is missing, it auto-installs it via a suppressed `subprocess` call to `pip`. [cite: 1]
-* **Pre-Flight Validation:** `main.py` calls `run_setup()` as a gatekeeper. [cite_start]If dependencies cannot be satisfied, the program exits gracefully to prevent runtime tracebacks. [cite: 1]
+* **Auto-Dependency Injection:** `setup.py` reads `requirements.txt` and uses `importlib` to check for missing packages. If a dependency like `psutil` is missing, it auto-installs it via a suppressed `subprocess` call to `pip`.
+* **Pre-Flight Validation:** `main.py` calls `run_setup()` as a gatekeeper. If dependencies cannot be satisfied, the program exits gracefully to prevent runtime tracebacks.
 
 ### 2. Multi-Layer Diagnostic Engine (`checkers.py`)
 The diagnostic logic is divided into two primary phases: **Local Infrastructure** and **Cloud Performance**.
 
 #### A. Local Network Stack (L1 - L4)
-* [cite_start]**DNS Resolution:** Uses `socket.gethostbyname()` to verify if the local DNS forwarder can resolve public domains (e.g., google.com). [cite: 1]
-* [cite_start]**Gateway & Interface Analysis:** * Identifies the default gateway IP based on the host OS (Windows: `ipconfig`, Linux: `ip route`, macOS: `netstat`). [cite: 1]
+* **DNS Resolution:** Uses `socket.gethostbyname()` to verify if the local DNS forwarder can resolve public domains (e.g., google.com). 
+* **Gateway & Interface Analysis:** * Identifies the default gateway IP based on the host OS (Windows: `ipconfig`, Linux: `ip route`, macOS: `netstat`). 
     * Pings the gateway to distinguish between a "total local outage" and an "ISP/Cloud outage."
-* **Service Port Auditing:** Iterates through a dictionary of critical ports (80, 443, 3389, etc.) using `socket.connect_ex()`. [cite_start]This identifies if specific traffic types are being dropped by a local firewall or ISP transparent proxy. [cite: 1]
+* **Service Port Auditing:** Iterates through a dictionary of critical ports (80, 443, 3389, etc.) using `socket.connect_ex()`. This identifies if specific traffic types are being dropped by a local firewall or ISP transparent proxy. 
 
 #### B. Cloud Latency Ranking Logic
-* [cite_start]**Median-Based Filtering:** To eliminate "network jitter" or temporary spikes, the tool takes **3 independent TCP samples** for each cloud region and calculates the **median latency**. [cite: 1]
-* [cite_start]**TCP Handshake Measurement:** Unlike standard ICMP pings (which are often de-prioritized or blocked by enterprise firewalls), this tool measures the time taken for a full TCP SYN/ACK handshake to specific cloud service endpoints (e.g., DynamoDB for AWS, Blob Storage for Azure). [cite: 1]
+* **Median-Based Filtering:** To eliminate "network jitter" or temporary spikes, the tool takes **3 independent TCP samples** for each cloud region and calculates the **median latency**. 
+* **TCP Handshake Measurement:** Unlike standard ICMP pings (which are often de-prioritized or blocked by enterprise firewalls), this tool measures the time taken for a full TCP SYN/ACK handshake to specific cloud service endpoints (e.g., DynamoDB for AWS, Blob Storage for Azure). 
 * **Classification Algorithm:** Latency is dynamically classified:
     * **FAST:** < 100ms
     * **OK:** 100ms - 200ms
     * **SLOW:** > 200ms
-    * [cite_start]**UNREACHABLE:** Connection timeout or refused. [cite: 1]
+    * **UNREACHABLE:** Connection timeout or refused.
 
 ### 3. Intelligence & Heuristics (`reporter.py`)
 The reporter doesn't just show data; it provides **Actionable Intelligence**.
-* [cite_start]**Regional Issue Detection:** If the "Home Region" is SLOW but other regions from the same provider are FAST, the system flags a **"Regional Degradation"** alert. [cite: 1]
-* [cite_start]**Alternative Suggestion Engine:** When a primary region is flagged as SLOW or UNREACHABLE, the logic parses the ranked list to find the next two fastest "FAST" or "OK" regions to suggest as immediate failover targets. [cite: 1]
-* [cite_start]**Automated Logging:** Every report is serialized into a string and written to a timestamped file in the `/logs` directory, ensuring a "paper trail" for every IT ticket handled. [cite: 1]
+* **Regional Issue Detection:** If the "Home Region" is SLOW but other regions from the same provider are FAST, the system flags a **"Regional Degradation"** alert. 
+* **Alternative Suggestion Engine:** When a primary region is flagged as SLOW or UNREACHABLE, the logic parses the ranked list to find the next two fastest "FAST" or "OK" regions to suggest as immediate failover targets. 
+* **Automated Logging:** Every report is serialized into a string and written to a timestamped file in the `/logs` directory, ensuring a "paper trail" for every IT ticket handled. 
 
 ---
 
