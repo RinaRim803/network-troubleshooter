@@ -1,13 +1,17 @@
-# Cloud provider region endpoints for latency measurement.
-# Each entry maps a human-readable region label to its public endpoint URL.
+# Cloud provider region endpoints for TCP latency measurement.
+#
+# Each entry maps a human-readable region label to its host and port.
+# TCP socket connection is used instead of HTTP to avoid TLS handshake overhead.
 #
 # Endpoint selection criteria:
 # - Publicly accessible without authentication
-# - Lightweight response (HEAD request friendly)
-# - Stable and unlikely to be removed
+# - Stable, long-term endpoints unlikely to be removed
+# - Per-region subdomains for accurate geographic measurement
 #
-# To add a new region: add an entry under the appropriate provider.
-# To add a new provider: add a new top-level key.
+# To add a region  : add an entry under the appropriate provider.
+# To add a provider: add a new top-level key with the same dict structure.
+# GCP is excluded  : no stable per-region public endpoints available.
+
 CLOUD_REGIONS = {
     "AWS": {
         "us-west-2      (Oregon)":      {"host": "dynamodb.us-west-2.amazonaws.com",      "port": 443},
@@ -26,8 +30,9 @@ CLOUD_REGIONS = {
 }
 
 # Latency thresholds (ms) for status classification
+# Tuned for Vancouver, BC — adjust if running from a different region
 LATENCY_THRESHOLDS = {
-    "FAST": 80,    # < 80ms   (같은 대륙, 가까운 리전)
-    "OK":   200,   # 80~200ms (다른 대륙)
-    "SLOW": 200,   # > 200ms
+    "FAST": 80,    # < 80ms  : same continent, nearby region
+    "OK":   200,   # < 200ms : cross-continent
+    "SLOW": 200,   # >= 200ms: degraded
 }

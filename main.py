@@ -11,7 +11,7 @@ from reporter import build_report, save_log
 
 
 def main():
-    print("\nRunning network troubleshooter...\n")
+    print("Running network troubleshooter...\n")
 
     # 1. Run all checks
     results = run_all_checks()
