@@ -5,6 +5,10 @@ import datetime
 from utils import separator, timestamp
 
 
+# ─────────────────────────────────────────
+# Format functions — one per check
+# ─────────────────────────────────────────
+
 def _format_dns(dns: dict) -> list:
     lines = ["[DNS RESOLUTION]"]
     if dns["status"] == "OK":
@@ -18,7 +22,7 @@ def _format_dns(dns: dict) -> list:
 def _format_gateway(gw: dict) -> list:
     lines = ["[DEFAULT GATEWAY]"]
     if not gw["gateway"]:
-        lines.append(f"  Could not determine gateway  [FAIL]")
+        lines.append("  Could not determine gateway  [FAIL]")
     else:
         state = "Reachable" if gw["reachable"] else "Unreachable"
         lines.append(f"  {gw['gateway']:<25} {state}  [{gw['status']}]")
@@ -53,10 +57,8 @@ def _format_ip_config(ip_config: dict) -> list:
     else:
         for c in ip_config["config"]:
             lines.append(f"  {c['interface']:<20} IP: {c['ip']}  Mask: {c['netmask']}")
-    if ip_config["dns_servers"]:
-        lines.append(f"  DNS Servers : {', '.join(ip_config['dns_servers'])}")
-    else:
-        lines.append("  DNS Servers : Not found")
+    dns = ip_config["dns_servers"]
+    lines.append(f"  DNS Servers : {', '.join(dns) if dns else 'Not found'}")
     lines.append(f"  [{ip_config['status']}]")
     return lines
 
@@ -65,7 +67,6 @@ def _format_traceroute(traceroute: dict) -> list:
     lines = ["[TRACEROUTE]"]
     lines.append(f"  Target : {traceroute['host']}")
     if traceroute["output"]:
-        # Show first 10 hops only
         for line in traceroute["output"][:12]:
             lines.append(f"  {line}")
     else:
@@ -78,11 +79,11 @@ def _format_ports(ports: dict) -> list:
     lines = [f"[PORT CHECK]  (target: {ports['host']})"]
     for r in ports["results"]:
         state = "OPEN  " if r["open"] else "CLOSED"
-        lines.append(
-            f"  {r['port']:<5} {r['service']:<8} {state}  — {r['use_case']}"
-        )
+        lines.append(f"  {r['port']:<5} {r['service']:<8} {state}  - {r['use_case']}")
     lines.append(f"  [{ports['status']}]")
     return lines
+
+
 def _format_cloud_latency(cloud: dict) -> list:
     lines = ["[CLOUD REGION LATENCY]"]
 
@@ -101,12 +102,10 @@ def _format_cloud_latency(cloud: dict) -> list:
         lines.append("  Regional issues detected:")
         for issue in cloud["regional_issues"]:
             slow = ", ".join(issue["slow_regions"])
-            lines.append(
-                f"  {issue['provider']} — slow regions: {slow}"
-            )
+            lines.append(f"  {issue['provider']} - slow regions: {slow}")
             lines.append(
                 f"  Note: other {issue['provider']} regions are fast "
-                f"— likely a regional issue, not your network."
+                f"- likely a regional issue, not your network."
             )
 
     # Alternative suggestions
@@ -114,7 +113,7 @@ def _format_cloud_latency(cloud: dict) -> list:
         lines.append("")
         lines.append("  Suggested alternatives:")
         for s in cloud["suggestions"]:
-            lines.append(f"  {s['provider']} {s['slow_region']} is SLOW — consider:")
+            lines.append(f"  {s['provider']} {s['slow_region']} is SLOW - consider:")
             for alt in s["alternatives"]:
                 lines.append(
                     f"    -> {alt['region']:<35} {alt['latency_ms']}ms  [{alt['classification']}]"
@@ -123,16 +122,26 @@ def _format_cloud_latency(cloud: dict) -> list:
     lines.append(f"  [{cloud['status']}]")
     return lines
 
+
+# ─────────────────────────────────────────
+# Overall status
+# ─────────────────────────────────────────
+
 def _get_overall(results: dict) -> str:
     """Determine overall status — FAIL if any check failed."""
     statuses = [v["status"] for v in results.values()]
     return "FAIL - check items above" if "FAIL" in statuses else "ALL CHECKS PASSED"
 
 
+# ─────────────────────────────────────────
+# Report builder
+# ─────────────────────────────────────────
+
 def build_report(results: dict) -> tuple:
     """
     Build a formatted report string from all check results.
     Returns (report_string, overall_status).
+    To add a new check: add a _format_<check>() call below.
     """
     lines = []
     lines.append(separator())
@@ -157,6 +166,10 @@ def build_report(results: dict) -> tuple:
 
     return "\n".join(lines), overall
 
+
+# ─────────────────────────────────────────
+# Log writer
+# ─────────────────────────────────────────
 
 def save_log(report: str) -> str:
     """Save the report to a timestamped log file in a 'logs' folder."""
