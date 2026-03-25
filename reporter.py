@@ -74,6 +74,55 @@ def _format_traceroute(traceroute: dict) -> list:
     return lines
 
 
+def _format_ports(ports: dict) -> list:
+    lines = [f"[PORT CHECK]  (target: {ports['host']})"]
+    for r in ports["results"]:
+        state = "OPEN  " if r["open"] else "CLOSED"
+        lines.append(
+            f"  {r['port']:<5} {r['service']:<8} {state}  — {r['use_case']}"
+        )
+    lines.append(f"  [{ports['status']}]")
+    return lines
+def _format_cloud_latency(cloud: dict) -> list:
+    lines = ["[CLOUD REGION LATENCY]"]
+
+    # Ranked results
+    lines.append("  Ranking (fastest to slowest):")
+    for i, r in enumerate(cloud["ranked"], 1):
+        ms_str = f"{r['latency_ms']}ms" if r["latency_ms"] else "N/A"
+        lines.append(
+            f"  {i:>2}. {r['provider']:<6} {r['region']:<35} "
+            f"{ms_str:>8}  [{r['classification']}]"
+        )
+
+    # Regional issues
+    if cloud["regional_issues"]:
+        lines.append("")
+        lines.append("  Regional issues detected:")
+        for issue in cloud["regional_issues"]:
+            slow = ", ".join(issue["slow_regions"])
+            lines.append(
+                f"  {issue['provider']} — slow regions: {slow}"
+            )
+            lines.append(
+                f"  Note: other {issue['provider']} regions are fast "
+                f"— likely a regional issue, not your network."
+            )
+
+    # Alternative suggestions
+    if cloud["suggestions"]:
+        lines.append("")
+        lines.append("  Suggested alternatives:")
+        for s in cloud["suggestions"]:
+            lines.append(f"  {s['provider']} {s['slow_region']} is SLOW — consider:")
+            for alt in s["alternatives"]:
+                lines.append(
+                    f"    -> {alt['region']:<35} {alt['latency_ms']}ms  [{alt['classification']}]"
+                )
+
+    lines.append(f"  [{cloud['status']}]")
+    return lines
+
 def _get_overall(results: dict) -> str:
     """Determine overall status — FAIL if any check failed."""
     statuses = [v["status"] for v in results.values()]
@@ -98,6 +147,8 @@ def build_report(results: dict) -> tuple:
     lines.extend(_format_interfaces(results["interfaces"]))
     lines.extend(_format_ip_config(results["ip_config"]))
     lines.extend(_format_traceroute(results["traceroute"]))
+    lines.extend(_format_ports(results["ports"]))
+    lines.extend(_format_cloud_latency(results["cloud_latency"]))
 
     lines.append(separator())
     overall = _get_overall(results)

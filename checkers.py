@@ -1,7 +1,10 @@
 import platform
 import socket
+import statistics
 import subprocess
 import psutil
+import time
+from cloud_regions import CLOUD_REGIONS, LATENCY_THRESHOLDS, REQUEST_TIMEOUT
 
 
 # ─────────────────────────────────────────
@@ -291,6 +294,197 @@ def check_traceroute(host: str = "8.8.8.8") -> dict:
         "status": "OK" if has_output else "FAIL",
     }
 
+# ─────────────────────────────────────────
+# Step 7 — Port check
+# ─────────────────────────────────────────
+ 
+# Default ports to check with their service names and common use cases
+DEFAULT_PORTS = [
+    {"port": 80,   "service": "HTTP",  "use_case": "Web browsing"},
+    {"port": 443,  "service": "HTTPS", "use_case": "Secure web browsing"},
+    {"port": 53,   "service": "DNS",   "use_case": "DNS server direct check"},
+    {"port": 3389, "service": "RDP",   "use_case": "Remote Desktop"},
+    {"port": 445,  "service": "SMB",   "use_case": "File sharing"},
+    {"port": 22,   "service": "SSH",   "use_case": "Remote access (Linux/Mac)"},
+]
+ 
+ 
+def check_ports(host: str = "8.8.8.8", ports: list = None) -> dict:
+    """
+    Check whether common service ports are open on a target host.
+    Uses socket connection attempt with a short timeout.
+ 
+    Args:
+        host  : Target host to check ports against (default: 8.8.8.8)
+        ports : List of port dicts to check (default: DEFAULT_PORTS)
+ 
+    Returns a list of results per port with open/closed status.
+    """
+    if ports is None:
+        ports = DEFAULT_PORTS
+ 
+    results = []
+    for entry in ports:
+        port    = entry["port"]
+        service = entry["service"]
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(3)
+            code = sock.connect_ex((host, port))
+            sock.close()
+            open_ = code == 0
+        except OSError:
+            open_ = False
+ 
+        results.append({
+            "port":     port,
+            "service":  service,
+            "use_case": entry["use_case"],
+            "open":     open_,
+            "status":   "OPEN" if open_ else "CLOSED",
+        })
+ 
+    # Overall: OK if at least HTTP or HTTPS is open
+    key_ports_open = any(
+        r["open"] for r in results if r["port"] in (80, 443)
+    )
+    return {
+        "host":    host,
+        "results": results,
+        "status":  "OK" if key_ports_open else "FAIL",
+    }
+
+# ─────────────────────────────────────────
+# Step 8 — Cloud region latency
+# ─────────────────────────────────────────
+
+def _measure_latency(host: str, port: int = 443) -> float | None:
+    """
+    Measure TCP connection latency to a host:port.
+    Takes 3 samples and returns the median to reduce noise.
+    Avoids TLS handshake overhead — closer to true network latency.
+    """
+    samples = []
+    for _ in range(3):
+        try:
+            start   = time.time()
+            sock    = socket.create_connection((host, port), timeout=5)
+            elapsed = (time.time() - start) * 1000
+            sock.close()
+            samples.append(elapsed)
+        except OSError:
+            pass
+    return round(statistics.median(samples), 1) if samples else None
+    
+
+
+def _classify_latency(ms: float | None) -> str:
+    """Classify latency into FAST / OK / SLOW / UNREACHABLE."""
+    if ms is None:
+        return "UNREACHABLE"
+    if ms < LATENCY_THRESHOLDS["FAST"]:
+        return "FAST"
+    if ms < LATENCY_THRESHOLDS["SLOW"]:
+        return "OK"
+    return "SLOW"
+
+
+def _suggest_alternatives(results: list, current_region: str, provider: str) -> list:
+    """
+    Given the current best region, suggest faster alternatives
+    from the same cloud provider.
+    Filters out SLOW and UNREACHABLE regions.
+    """
+    same_provider = [
+        r for r in results
+        if r["provider"] == provider
+        and r["region"] != current_region
+        and r["latency_ms"] is not None
+        and r["classification"] in ("FAST", "OK")
+    ]
+    # Sort by latency ascending
+    return sorted(same_provider, key=lambda r: r["latency_ms"])[:3]
+
+
+def check_cloud_latency() -> dict:
+    """
+    Measure latency to each cloud provider region endpoint.
+
+    For each region:
+    - Sends an HTTP HEAD request
+    - Records response time (ms)
+    - Classifies as FAST / OK / SLOW / UNREACHABLE
+
+    Then:
+    - Ranks all regions by latency (fastest first)
+    - Detects if any provider has regions with mixed FAST/SLOW results
+      (indicates a regional issue, not a local network problem)
+    - Suggests alternative regions when the current best is SLOW
+    """
+    all_results = []
+
+    for provider, regions in CLOUD_REGIONS.items():
+        for region, endpoint in regions.items():
+            ms             = _measure_latency(endpoint["host"], endpoint["port"])
+            classification = _classify_latency(ms)
+            all_results.append({
+            "provider":       provider,
+            "region":         region,
+            "host":           endpoint["host"],
+            "latency_ms":     ms,
+            "classification": classification,
+            })
+
+    # Sort all results by latency (unreachable goes to the end)
+    ranked = sorted(
+        all_results,
+        key=lambda r: r["latency_ms"] if r["latency_ms"] is not None else float("inf")
+    )
+
+    # Detect regional issues per provider
+    # If same provider has both FAST and SLOW regions → likely a regional issue
+    regional_issues = []
+    for provider in CLOUD_REGIONS:
+        provider_results = [r for r in all_results if r["provider"] == provider]
+        has_fast = any(r["classification"] == "FAST" for r in provider_results)
+        has_slow = any(r["classification"] in ("SLOW", "UNREACHABLE") for r in provider_results)
+        if has_fast and has_slow:
+            slow_regions = [
+                r["region"] for r in provider_results
+                if r["classification"] in ("SLOW", "UNREACHABLE")
+            ]
+            regional_issues.append({
+                "provider":     provider,
+                "slow_regions": slow_regions,
+            })
+
+    # Suggest alternatives for the slowest reachable region per provider
+    suggestions = []
+    for provider in CLOUD_REGIONS:
+        provider_results = [r for r in all_results if r["provider"] == provider]
+        slow_ones = [
+            r for r in provider_results
+            if r["classification"] == "SLOW"
+        ]
+        for slow in slow_ones:
+            alternatives = _suggest_alternatives(all_results, slow["region"], provider)
+            if alternatives:
+                suggestions.append({
+                    "provider":     provider,
+                    "slow_region":  slow["region"],
+                    "alternatives": alternatives,
+                })
+
+    reachable = [r for r in all_results if r["latency_ms"] is not None]
+    overall = "OK" if reachable else "FAIL"
+
+    return {
+        "ranked":          ranked,
+        "regional_issues": regional_issues,
+        "suggestions":     suggestions,
+        "status":          overall,
+    }
+
 
 # ─────────────────────────────────────────
 # Run all checks
@@ -299,10 +493,13 @@ def check_traceroute(host: str = "8.8.8.8") -> dict:
 def run_all_checks() -> dict:
     """Run all network checks and return results as a single dict."""
     return {
-        "dns":        check_dns(),
-        "gateway":    check_gateway(),
-        "internet":   check_internet(),
-        "interfaces": check_interfaces(),
-        "ip_config":  check_ip_config(),
-        "traceroute": check_traceroute(),
+        "dns":           check_dns(),
+        "gateway":       check_gateway(),
+        "internet":      check_internet(),
+        "interfaces":    check_interfaces(),
+        "ip_config":     check_ip_config(),
+        "traceroute":    check_traceroute(),
+        "ports":         check_ports(),
+        "cloud_latency": check_cloud_latency(), 
     }
+
