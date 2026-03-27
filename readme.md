@@ -14,6 +14,7 @@ A professional-grade Python diagnostic tool designed to transform manual, time-c
 | **Root Cause Accuracy** | High risk of misdiagnosing cloud issues | **Data-driven detection** |
 | **Decision Support** | Manual research for failover | **Auto-suggested alternatives** |
 | **Documentation** | Often missing or inconsistent | **Timestamped logs saved automatically** |
+| **Ticket Creation** | Manual entry after diagnosis | **Auto-created per failed check with full report attached** |
 
 ---
 
@@ -25,7 +26,7 @@ A professional-grade Python diagnostic tool designed to transform manual, time-c
 **The Problem:** Traditional manual checks (ping, ipconfig, traceroute) are inefficient in cloud-first environments. When a specific AWS or Azure region is degraded, it often looks identical to a local network problem, leading to 15+ minutes of wasted troubleshooting.
 
 **The Solution:**
-A modular Python tool that executes a full-stack diagnostic—from local L1 checks to cloud-layer latency ranking—in a single command.
+A modular Python tool that executes a full-stack diagnostic—from local L1 checks to cloud-layer latency ranking—in a single command. When failures are detected, tickets are automatically created in the IT Ticket System so nothing falls through the cracks.
 
 ## 📊 Sample Report Output
 
@@ -125,6 +126,15 @@ python main.py
   [ reporter.py ] -----> Assemble results into a formatted report
         |
   [ logs/ ] -----------> Save timestamped .log file for ticket documentation
+        |
+        +-- FAIL detected ---------> integrations/network_client.py
+        |                            • One ticket per failed check
+        |                            • Full diagnostic report attached
+        |                            • Auto-classified and prioritized
+        |                            • Fails gracefully if server not running
+        |
+        +-- ALL CHECKS PASSED -----> "Save as ticket? (y/n)"
+                                     • Optional audit trail record
 ```
 
 ## ⚙️ Technical Architecture & Internal Logic
@@ -160,29 +170,72 @@ The reporter doesn't just show data; it provides **Actionable Intelligence**.
 * **Alternative Suggestion Engine:** When a primary region is flagged as SLOW or UNREACHABLE, the logic parses the ranked list to find the next two fastest "FAST" or "OK" regions to suggest as immediate failover targets. 
 * **Automated Logging:** Every report is serialized into a string and written to a timestamped file in the `/logs` directory, ensuring a "paper trail" for every IT ticket handled. 
 
+### 4. IT Ticket System Integration (`integrations/network_client.py`)
+ 
+Converts diagnostic results into structured ticket payloads and POSTs them to the IT Ticket System API.
+ 
+**Ticket trigger logic:**
+ 
+| Check | Ticket condition | Ticket title |
+| :--- | :--- | :--- |
+| DNS | `status == "FAIL"` | DNS Resolution Failed |
+| Gateway | `status == "FAIL"` | Default Gateway Unreachable |
+| Internet | `status == "FAIL"` | Internet Connectivity Lost |
+| Interfaces | `status == "FAIL"` | No Active Network Interface Detected |
+| Ports | `status == "FAIL"` | Key Ports Unreachable (HTTP/HTTPS Blocked) |
+| Cloud latency | `regional_issues` present | Cloud Region Degradation Detected |
+| All passed | User prompt `(y/n)` | Network Diagnostic Run — All Checks Passed |
+ 
+Cloud latency uses `regional_issues` rather than `status == "FAIL"` because the overall status can be `OK` while a specific regional degradation pattern is still present — a FAST region coexisting with a SLOW one from the same provider signals a cloud-side issue worth tracking.
+ 
+The integration is **optional and non-blocking** — if the IT Ticket System server is not running, `main.py` continues normally and prints `[TICKET] Skipped`.
+
 ---
 
 ### 🛠️ Core Function Mapping
 
 | Module | Key Function | Logic Description |
 | :--- | :--- | :--- |
-| **Checkers** | `check_cloud_latency()` | Orchestrates multi-threaded or sequential TCP probes to global endpoints. |
+| **Checkers** | `check_cloud_latency()` | Orchestrates sequential TCP probes to global endpoints. |
 | **Checkers** | `check_traceroute()` | Executes OS-native traceroute to identify the specific hop where latency spikes. |
 | **Setup** | `load_requirements()` | Parses version-locked dependencies and maps install names to import names. |
 | **Reporter** | `_get_overall()` | A Boolean-gate logic that marks the entire ticket as 'FAIL' if any sub-check returns a failure status. |
+| **Integration** | `create_tickets_for_failures()` | Maps each failed check to a ticket payload and POSTs to IT Ticket System API. |
+| **Integration** | `prompt_save_as_ticket()` | Offers optional ticket creation when all checks pass, for audit trail purposes. |
 
 
-
+---
 ## 🚀 Key Features
 
 * **Cloud Region Ranking**: Ranks 10+ global regions (AWS/Azure) using 3-sample median TCP latency to filter noise. 
 * **Cross-Platform Engine**: Native support for Windows (ipconfig), macOS (scutil), and Linux (ip route) commands. 
 * **Port Availability**: Quickly verifies critical service ports (HTTP, HTTPS, RDP, SMB, DNS, SSH). 
 * **Self-Healing Setup**: Automatically manages its own environment using config.json and requirements.txt.
-
+* **Auto-Ticketing**: Failed checks are automatically converted into structured tickets in the IT Ticket System — no manual entry needed.
+---
+## 🔗 Integration with IT Ticket System
+ 
+This tool is part of a three-project IT support automation pipeline:
+ 
+```
+sys-health-check
+  └─ Detects system anomalies (CPU, RAM, Disk, Services)
+       └─ Auto-creates tickets in IT Ticket System on WARNING
+ 
+network-troubleshooter   (this project)
+  └─ Runs full-stack network diagnostics
+       └─ Auto-creates tickets per failed check with full report attached
+ 
+it-ticket-system
+  └─ Central ITSM server — receives alerts, classifies, prioritizes,
+     and tracks tickets to resolution via REST API
+```
+ 
+---
 ## 💻 Skills Demonstrated
 
 * **Automation**: Python-based workflow orchestration and auto-dependency management.
 * **Networking**: Socket programming, TCP/IP, DNS resolution, and routing analysis.
 * **Operations**: IT Support ticket lifecycle optimization and incident response (IR) support.
 * **Architecture**: Clean, modular code design with clear separation of logic and data.
+* **REST API Integration**: HTTP client sending structured diagnostic payloads to a Flask API server.
